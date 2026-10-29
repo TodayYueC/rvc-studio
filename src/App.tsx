@@ -28,7 +28,7 @@ function App(){
  useEffect(()=>{
    if(status!=='启动中' && status!=='音频运行中') return
    let active=true
-   const timer=window.setInterval(async()=>{try{const r=await invoke<{running:boolean,log:string}>('engine_status');if(!active)return;setLog(r.log);setStatus(r.running?(r.log.includes('Audio stream started')?'音频运行中':'启动中'):'引擎已退出')}catch(e){if(active){setLog(String(e));setStatus('状态读取失败')}}},2000)
+   const timer=window.setInterval(async()=>{try{const r=await invoke<{running:boolean,stopped:boolean,log:string}>('engine_status');if(!active)return;setLog(r.log);setStatus(r.running?(r.log.includes('Audio stream started')?'音频运行中':'启动中'):(r.stopped?'已停止':'引擎已退出'))}catch(e){if(active){setLog(String(e));setStatus('状态读取失败')}}},2000)
    return ()=>{active=false;window.clearInterval(timer)}
  },[status])
  const update=<K extends keyof Config>(key:K,value:Config[K])=>setCfg(old=>({...old,[key]:value}))

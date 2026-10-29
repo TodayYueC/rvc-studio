@@ -3,6 +3,15 @@ use std::{fs::File, process::{Child, Command, Stdio}, sync::{Mutex, atomic::{Ato
 use tauri::{Manager, State, menu::{Menu, MenuItem}, tray::TrayIconBuilder};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 struct Engine { child: Mutex<Option<Child>>, shortcut_available: AtomicBool }
+fn python_command(path: &str) -> Command {
+    let mut command=Command::new(path);
+    command.stdin(Stdio::null());
+    #[cfg(windows)] {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+    command
+}
 fn stop_child(state: &Engine) -> Result<(),String> {
     let mut guard=state.child.lock().map_err(|e|e.to_string())?;
     if let Some(mut c)=guard.take() { let _=c.kill(); let _=c.wait(); }
@@ -16,7 +25,7 @@ fn log_path(app: &tauri::AppHandle) -> Result<std::path::PathBuf,String> { let d
 #[tauri::command]
 fn devices(app: tauri::AppHandle, python: String) -> Result<serde_json::Value,String> {
     if python.is_empty() {return Err("请先选择 Python 解释器".into());}
-    let output=Command::new(python).env("PYTHONIOENCODING","utf-8").arg(script(&app)?).arg("devices").output().map_err(|e|e.to_string())?;
+    let output=python_command(&python).env("PYTHONIOENCODING","utf-8").arg(script(&app)?).arg("devices").output().map_err(|e|e.to_string())?;
     if !output.status.success() {return Err(String::from_utf8_lossy(&output.stderr).into_owned());}
     serde_json::from_slice(&output.stdout).map_err(|e|e.to_string())
 }
@@ -26,7 +35,7 @@ async fn download_demo(app: tauri::AppHandle, python: String) -> Result<serde_js
     let script_path=script(&app)?;
     let model_dir=app.path().app_data_dir().map_err(|e|e.to_string())?.join("models").join("aiso-howatto");
     tauri::async_runtime::spawn_blocking(move || {
-        let output=Command::new(python).env("PYTHONIOENCODING","utf-8")
+        let output=python_command(&python).env("PYTHONIOENCODING","utf-8")
             .env("RVC_STUDIO_MODEL_DIR",model_dir).arg(script_path).arg("download-demo")
             .output().map_err(|e|e.to_string())?;
         if !output.status.success() {return Err(String::from_utf8_lossy(&output.stderr).into_owned());}
@@ -40,7 +49,7 @@ fn start_engine(app: tauri::AppHandle, state: State<Engine>, config: serde_json:
     let python=config["python"].as_str().filter(|s|!s.is_empty()).ok_or("请先选择 Python")?;
     let log=File::create(log_path(&app)?).map_err(|e|e.to_string())?;
     let err=log.try_clone().map_err(|e|e.to_string())?;
-    let child=Command::new(python).arg("-u").arg(script(&app)?).arg("run").env("PYTHONIOENCODING","utf-8").env("RVC_STUDIO_CONFIG",config.to_string()).stdout(Stdio::from(log)).stderr(Stdio::from(err)).spawn().map_err(|e|e.to_string())?;
+    let child=python_command(python).arg("-u").arg(script(&app)?).arg("run").env("PYTHONIOENCODING","utf-8").env("RVC_STUDIO_CONFIG",config.to_string()).stdout(Stdio::from(log)).stderr(Stdio::from(err)).spawn().map_err(|e|e.to_string())?;
     *guard=Some(child); Ok(())
 }
 #[tauri::command]
@@ -49,8 +58,9 @@ fn stop_engine(state: State<Engine>) -> Result<(),String> { stop_child(&state) }
 fn engine_status(app: tauri::AppHandle,state: State<Engine>) -> Result<serde_json::Value,String> {
     let mut guard=state.child.lock().map_err(|e|e.to_string())?;
     let running=match guard.as_mut(){Some(c)=>c.try_wait().map_err(|e|e.to_string())?.is_none(),None=>false};
+    let stopped=guard.is_none();
     let log=std::fs::read_to_string(log_path(&app)?).unwrap_or_default();
-    Ok(serde_json::json!({"running":running,"shortcutAvailable":state.shortcut_available.load(Ordering::Relaxed),"log":log.chars().rev().take(12000).collect::<String>().chars().rev().collect::<String>()}))
+    Ok(serde_json::json!({"running":running,"stopped":stopped,"shortcutAvailable":state.shortcut_available.load(Ordering::Relaxed),"log":log.chars().rev().take(12000).collect::<String>().chars().rev().collect::<String>()}))
 }
 fn main() {
     tauri::Builder::default()
