@@ -21,6 +21,19 @@ fn devices(app: tauri::AppHandle, python: String) -> Result<serde_json::Value,St
     serde_json::from_slice(&output.stdout).map_err(|e|e.to_string())
 }
 #[tauri::command]
+async fn download_demo(app: tauri::AppHandle, python: String) -> Result<serde_json::Value,String> {
+    if python.is_empty() { return Err("请先在设置中选择 Python 解释器".into()); }
+    let script_path=script(&app)?;
+    let model_dir=app.path().app_data_dir().map_err(|e|e.to_string())?.join("models").join("aiso-howatto");
+    tauri::async_runtime::spawn_blocking(move || {
+        let output=Command::new(python).env("PYTHONIOENCODING","utf-8")
+            .env("RVC_STUDIO_MODEL_DIR",model_dir).arg(script_path).arg("download-demo")
+            .output().map_err(|e|e.to_string())?;
+        if !output.status.success() {return Err(String::from_utf8_lossy(&output.stderr).into_owned());}
+        serde_json::from_slice(&output.stdout).map_err(|e|e.to_string())
+    }).await.map_err(|e|e.to_string())?
+}
+#[tauri::command]
 fn start_engine(app: tauri::AppHandle, state: State<Engine>, config: serde_json::Value) -> Result<(),String> {
     let mut guard=state.child.lock().map_err(|e|e.to_string())?;
     if let Some(c)=guard.as_mut() { if c.try_wait().map_err(|e|e.to_string())?.is_none() {return Err("引擎已在运行".into());} }
@@ -67,7 +80,7 @@ fn main() {
             app.state::<Engine>().shortcut_available.store(available,Ordering::Relaxed);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![devices,start_engine,stop_engine,engine_status])
+        .invoke_handler(tauri::generate_handler![devices,start_engine,stop_engine,engine_status,download_demo])
         .on_window_event(|window,event| {
             if let tauri::WindowEvent::CloseRequested { api, .. }=event {
                 api.prevent_close();

@@ -3,7 +3,53 @@ import json
 import os
 import sys
 import traceback
+import hashlib
+import tempfile
+import urllib.request
 from pathlib import Path
+
+DEMO_URL = 'https://huggingface.co/wok000/vcclient_model/resolve/c46962577db8cf3fba2b3fc3526af98eb6611840/rvc_v2_chihaya_jinja/V2-AISO-HOWATTO.pth'
+DEMO_SHA256 = '8fc32652b8ec472615af3f6661a50a195dd54990e0f517bd0dbd66db59813146'
+
+def file_sha256(path):
+    digest = hashlib.sha256()
+    with open(path, 'rb') as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+def download_demo(directory):
+    """Download a pinned, documented model; never replace an existing file."""
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / 'V2-AISO-HOWATTO.pth'
+    if target.exists():
+        if file_sha256(target) != DEMO_SHA256:
+            raise FileExistsError('Existing model has a different checksum; choose a different location or remove it yourself')
+        return str(target)
+    temp_name = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=directory, prefix='aiso-', suffix='.download', delete=False) as temporary:
+            temp_name = temporary.name
+            with urllib.request.urlopen(DEMO_URL, timeout=60) as response:
+                total = 0
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > 70 * 1024 * 1024:
+                        raise ValueError('Model download exceeded expected size')
+                    temporary.write(chunk)
+        if file_sha256(temp_name) != DEMO_SHA256:
+            raise ValueError('Downloaded model checksum mismatch')
+        # Link in the same directory: an existing destination is never replaced,
+        # and an interrupted transfer cannot leave a partial target file.
+        os.link(temp_name, target)
+        return str(target)
+    finally:
+        if temp_name and os.path.exists(temp_name):
+            os.unlink(temp_name)
 
 def validate(cfg):
     """Reject invalid settings before loading the expensive inference runtime."""
@@ -72,6 +118,7 @@ def run(cfg):
 if __name__ == '__main__':
     try:
         if sys.argv[1] == 'devices': print(json.dumps(devices(),ensure_ascii=False))
+        elif sys.argv[1] == 'download-demo': print(json.dumps({'path': download_demo(os.environ['RVC_STUDIO_MODEL_DIR'])}, ensure_ascii=False))
         elif sys.argv[1] == 'run': run(json.loads(os.environ['RVC_STUDIO_CONFIG']))
         else: raise ValueError('Unknown command')
     except Exception:

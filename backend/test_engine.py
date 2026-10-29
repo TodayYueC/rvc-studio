@@ -1,6 +1,10 @@
 import tempfile
 import unittest
+import hashlib
+import io
 from pathlib import Path
+from unittest.mock import patch
+import engine
 from engine import validate
 
 
@@ -49,6 +53,31 @@ class ConfigurationValidationTests(unittest.TestCase):
     def test_accepts_two_second_block(self):
         self.cfg['block'] = 2000
         validate(self.cfg)
+
+class ModelDownloadTests(unittest.TestCase):
+    def test_download_checks_hash_and_reuses_existing_model(self):
+        data = b'example model bytes'
+        checksum = hashlib.sha256(data).hexdigest()
+        with tempfile.TemporaryDirectory() as directory, patch.object(engine, 'DEMO_SHA256', checksum), patch.object(engine.urllib.request, 'urlopen', return_value=io.BytesIO(data)) as fetch:
+            path = Path(engine.download_demo(directory))
+            self.assertEqual(path.read_bytes(), data)
+            self.assertEqual(engine.download_demo(directory), str(path))
+            self.assertEqual(fetch.call_count, 1)
+            self.assertEqual(list(Path(directory).glob('*.download')), [])
+
+    def test_existing_mismatch_is_never_overwritten(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'V2-AISO-HOWATTO.pth'
+            path.write_bytes(b'existing')
+            with self.assertRaises(FileExistsError):
+                engine.download_demo(directory)
+            self.assertEqual(path.read_bytes(), b'existing')
+
+    def test_bad_download_is_not_installed(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(engine.urllib.request, 'urlopen', return_value=io.BytesIO(b'bad bytes')):
+            with self.assertRaisesRegex(ValueError, 'checksum'):
+                engine.download_demo(directory)
+            self.assertEqual(list(Path(directory).iterdir()), [])
 
 if __name__ == '__main__':
     unittest.main()
