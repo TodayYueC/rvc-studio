@@ -46,5 +46,9 @@ class ConfigurationValidationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'block'):
             validate(self.cfg)
 
+    def test_accepts_two_second_block(self):
+        self.cfg['block'] = 2000
+        validate(self.cfg)
+
 if __name__ == '__main__':
     unittest.main()

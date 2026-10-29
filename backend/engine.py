@@ -26,8 +26,8 @@ def validate(cfg):
         raise ValueError('Index mix requires an index file')
     if int(cfg['rate']) not in (44100, 48000):
         raise ValueError('Unsupported sample rate')
-    if not 80 <= float(cfg['block']) <= 500:
-        raise ValueError('Audio block must be between 80 and 500 ms')
+    if not 80 <= float(cfg['block']) <= 2000:
+        raise ValueError('Audio block must be between 80 and 2000 ms')
     return root, model
 
 def devices():
