@@ -1,8 +1,15 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use std::{fs::File, process::{Child, Command, Stdio}, sync::{Mutex, atomic::{AtomicBool, Ordering}}};
+use std::{fs::File, io::{Read, Seek, SeekFrom}, process::{Child, Command, Stdio}, sync::{Mutex, atomic::{AtomicBool, Ordering}}};
 use tauri::{Manager, State, menu::{Menu, MenuItem}, tray::TrayIconBuilder};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 struct Engine { child: Mutex<Option<Child>>, shortcut_available: AtomicBool }
+impl Drop for Engine {
+    fn drop(&mut self) {
+        if let Ok(slot)=self.child.get_mut() {
+            if let Some(mut child)=slot.take() { let _=child.kill(); let _=child.wait(); }
+        }
+    }
+}
 fn python_command(path: &str) -> Command {
     let mut command=Command::new(path);
     command.stdin(Stdio::null());
@@ -59,7 +66,16 @@ fn engine_status(app: tauri::AppHandle,state: State<Engine>) -> Result<serde_jso
     let mut guard=state.child.lock().map_err(|e|e.to_string())?;
     let running=match guard.as_mut(){Some(c)=>c.try_wait().map_err(|e|e.to_string())?.is_none(),None=>false};
     let stopped=guard.is_none();
-    let log=std::fs::read_to_string(log_path(&app)?).unwrap_or_default();
+    let log=match File::open(log_path(&app)?) {
+        Ok(mut file) => {
+            let size=file.metadata().map(|m|m.len()).unwrap_or(0);
+            let _=file.seek(SeekFrom::Start(size.saturating_sub(65536)));
+            let mut bytes=Vec::new();
+            let _=file.take(65536).read_to_end(&mut bytes);
+            String::from_utf8_lossy(&bytes).into_owned()
+        }
+        Err(_) => String::new()
+    };
     Ok(serde_json::json!({"running":running,"stopped":stopped,"shortcutAvailable":state.shortcut_available.load(Ordering::Relaxed),"log":log.chars().rev().take(12000).collect::<String>().chars().rev().collect::<String>()}))
 }
 fn main() {
